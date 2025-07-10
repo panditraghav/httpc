@@ -12,7 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-void parse_http_request(char *request, size_t req_size);
+void parse_http_request_head(char *request, size_t req_size);
 void sigchild_handler(int s);
 void serve_request();
 
@@ -22,6 +22,7 @@ void serve_request();
 #ifdef HTTP_IMPLEMENTATION
 
 #define BACKLOG 20
+#define RECV_BUFF_SIZE 512
 
 void sigchild_handler(int s) {
   (void)s; // Quite unused variable warnings
@@ -33,28 +34,42 @@ void sigchild_handler(int s) {
   errno = saved_errno;
 }
 
-void parse_http_request(char *request, size_t req_size) {
-  char line[200];
-  size_t line_i = 0;
+void parse_http_request_head(char *request, size_t req_size) {
   size_t req_i = 0;
+  char line[512];
+  size_t line_i = 0;
+  size_t line_read = 0;
+  char http_method[7], resource_url[100], http_version[8];
 
   while (req_i < req_size) {
-    while (!(request[req_i] == '\r' && request[req_i + 1] == '\n')) {
+
+    while (strncmp(request + req_i, "\r\n", 2) != 0) {
       line[line_i++] = request[req_i++];
       if (line_i == 200) {
         line[line_i] = '\0';
-        printf("greater: ");
         puts(line);
         return;
       }
     }
+
     line[line_i] = '\0';
-    printf("line: ");
-    puts(line);
     req_i += 2;
     line_i = 0;
+
+    line_read++;
+    if (line_read == 1) {
+      sscanf(line, "%s %s %s", http_method, resource_url, http_version);
+      printf("Method: %s\nResource URL: %s\nVersion: %s\n", http_method,
+             resource_url, http_version);
+      continue;
+    }
+
+    char key[50] = {0}, value[100] = {0};
+    // Example: Content-Length: 44
+    sscanf(line, "%s %100c", key, value);
+    key[strlen(key) - 1] = '\0'; // Removing :
+    printf("%s: %s\n", key, value);
   }
-  printf("req_size: %zu, req_i: %zu, line_i: %zu\n", req_size, req_i, line_i);
 }
 
 void create_server(char *port) {
@@ -120,16 +135,44 @@ void create_server(char *port) {
     new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
 
     if (new_fd < 0) {
-      fprintf(stderr, "[ERROR] accept\n");
+      fprintf(stderr, "[ERROR] accept: %s\n", strerror(errno));
       continue;
     }
 
     if (!fork()) {
-      close(sockfd); // child doesn't need the listener
-      if (send(new_fd, "Hello, world!", 13, 0) == -1) {
-        fprintf(stderr, "[ERROR] send\n");
-        close(new_fd);
-        exit(EXIT_SUCCESS);
+      int recvcount = 0;
+      char recv_buff[RECV_BUFF_SIZE] = {0};
+      char req_head[RECV_BUFF_SIZE] = {0};
+      size_t req_head_i = 0;
+      char got_head = 0;
+
+      while (1) {
+        if ((recvcount = recv(new_fd, recv_buff, RECV_BUFF_SIZE, 0)) < 0) {
+          fprintf(stderr, "[ERROR] recv: %s\n", strerror(errno));
+          break;
+        }
+        printf("Received message of size %d bytes:\n", recvcount);
+
+        size_t recv_buff_i = 0;
+        while (!got_head) {
+          if (strncmp(recv_buff + recv_buff_i, "\r\n\r\n", 4) == 0) {
+            got_head = 1;
+            strcpy(req_head + req_head_i, "\r\n");
+            req_head[req_head_i + 2] = '\0';
+            break;
+          }
+          req_head[req_head_i++] = recv_buff[recv_buff_i++];
+        }
+
+        if (got_head) {
+          parse_http_request_head(req_head, req_head_i);
+          // TODO: Put rest of the recv_buff data after \r\n\r\n into a new
+          // req_body buffer
+        }
+
+        if (recvcount < RECV_BUFF_SIZE) {
+          break;
+        }
       }
     }
     close(new_fd); // Parent doesn't need this
