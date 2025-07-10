@@ -1,15 +1,5 @@
-#include <arpa/inet.h>
-#include <errno.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-int main(int argc, char *argv[]) {
+#ifdef TEST
+void client() {
   int gai_status;
   struct addrinfo *info;
   struct addrinfo hints = {0};
@@ -63,7 +53,7 @@ int main(int argc, char *argv[]) {
 
   int sendcount = 0, recvcount = 0;
   char *send_buff = "GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
-  size_t recv_buff_size = 100;
+  size_t recv_buff_size = 512;
   char recv_buff[recv_buff_size];
 
   if ((sendcount = send(sockfd, send_buff, strlen(send_buff), 0)) < 0) {
@@ -73,13 +63,14 @@ int main(int argc, char *argv[]) {
 
   printf("[INFO] sent %d bytes\n", sendcount);
   printf("[INFO] Message receved:\n");
+
   while (1) {
     if ((recvcount = recv(sockfd, recv_buff, recv_buff_size, 0)) < 0) {
       fprintf(stderr, "[ERROR] recv: %s\n", strerror(errno));
       return 1;
     }
     recv_buff[recvcount] = '\0';
-    printf("%s\n", recv_buff);
+    parse_http_request(recv_buff, recvcount);
 
     if (recvcount < recv_buff_size) {
       break;
@@ -90,3 +81,4 @@ int main(int argc, char *argv[]) {
   freeaddrinfo(info);
   return 0;
 }
+#endif // TEST
